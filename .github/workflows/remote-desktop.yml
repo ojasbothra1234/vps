@@ -1,0 +1,100 @@
+# .github/workflows/remote-desktop.yml
+
+name: Remote Desktop via RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp-session:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 1. Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 2. Install Dependencies
+        run: |
+          echo "Installing Desktop Environment and RDP Server..."
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y \
+            xfce4 \
+            xfce4-goodies \
+            dbus-x11 \
+            xorg \
+            xrdp \
+            wget \
+            jq
+
+      - name: 3. Configure User and XRDP
+        run: |
+          echo "Configuring user and starting RDP service..."
+          
+          # --- IMPORTANT SECURITY NOTICE ---
+          # Change this password! Do not use the default.
+          # You can also use a GitHub secret for this password for better security.
+          # For example: echo "runner:${{ secrets.RDP_PASSWORD }}" | sudo chpasswd
+          PASSWORD="your-strong-password-here"
+          echo "runner:$PASSWORD" | sudo chpasswd
+          
+          # Configure XRDP to use XFCE
+          echo "xfce4-session" > ~/.xsession
+          
+          # Grant runner user permissions for RDP certificate
+          sudo adduser runner ssl-cert
+          
+          # Restart the RDP service to apply changes
+          sudo systemctl restart xrdp
+
+      - name: 4. Setup ngrok Tunnel
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          echo "Setting up ngrok tunnel..."
+          # Download and unzip ngrok
+          wget https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz
+          tar -xvzf ngrok-v3-stable-linux-amd64.tgz
+          
+          # Authenticate ngrok using the secret
+          ./ngrok config add-authtoken $NGROK_AUTH_TOKEN
+          
+          # Start ngrok TCP tunnel for RDP port 3389 in the background
+          ./ngrok tcp 3389 &
+
+      - name: 5. Get Connection Details
+        run: |
+          # Wait a few seconds for the tunnel to establish
+          sleep 5
+          
+          # Query the ngrok API to get the public URL and print it
+          RDP_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url')
+          
+          if [ -z "$RDP_URL" ] || [ "$RDP_URL" == "null" ]; then
+            echo "Error: Could not retrieve ngrok URL. Please check your authtoken."
+            exit 1
+          fi
+
+          # The URL will be in the format tcp://0.tcp.ngrok.io:12345
+          # We need to extract the hostname and port for RDP clients.
+          RDP_HOST=$(echo $RDP_URL | sed 's/tcp:\/\///' | cut -d: -f1)
+          RDP_PORT=$(echo $RDP_URL | sed 's/tcp:\/\///' | cut -d: -f2)
+
+          echo "========================================================================================"
+          echo "✅ RDP Connection Ready"
+          echo
+          echo "Connect using the following details:"
+          echo "   Host/Server: $RDP_HOST"
+          echo "   Port:        $RDP_PORT"
+          echo "   Username:    runner"
+          echo "   Password:    The password you set in Step 3 of the workflow."
+          echo
+          echo "Example for Windows Remote Desktop: $RDP_HOST:$RDP_PORT"
+          echo "========================================================================================"
+          echo "The job will remain active for you to connect."
+          echo "It will automatically time out or you can manually cancel it in GitHub Actions."
+
+      - name: 6. Keep Alive
+        run: |
+          # Keep the job running for up to ~6 hours (GitHub's max job timeout)
+          # You can adjust this time if you need a shorter session.
+          sleep 21000
