@@ -18,21 +18,31 @@ jobs:
 
       - name: 2. Install Dependencies (XRDP, Desktop, and Curl)
         run: |
-          echo "### Updating and installing dependencies... ###"
-          # The fix is here: We are adding 'curl' to the installation list
-          # to ensure it's available before the next step tries to use it.
-          docker exec kali bash -c "apt-get update && apt-get install -y kali-desktop-xfce xrdp curl"
+          # Exit immediately if any command fails
+          set -e
+          echo "### Updating package lists... ###"
+          docker exec kali apt-get update
+
+          echo "### Installing packages... ###"
+          docker exec kali apt-get install -y kali-desktop-xfce xrdp curl
           
       - name: 3. Configure User and Start XRDP
         run: |
+          set -e
           echo "### Setting root password to 'kali' and starting XRDP service... ###"
           docker exec kali bash -c 'echo "root:kali" | chpasswd'
           docker exec kali bash -c "service xrdp start"
 
       - name: 4. Install and Connect Tailscale
         run: |
-          echo "### Installing and starting Tailscale inside the container... ###"
-          docker exec kali bash -c "curl -fsSL https://tailscale.com/install.sh | sh && tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm"
+          set -e
+          echo "### Installing Tailscale inside the container... ###"
+          docker exec kali bash -c "curl -fsSL https://tailscale.com/install.sh | sh"
+          
+          echo "### Starting Tailscale and connecting to the tailnet... ###"
+          # This command will now run separately. If the auth key is wrong,
+          # the error message will be clearly visible in the logs for this step.
+          docker exec kali tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm
           
       - name: 5. Keep Workflow Alive
         run: |
