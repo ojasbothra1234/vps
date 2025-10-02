@@ -14,13 +14,14 @@ jobs:
         run: |
           echo "### Starting Kali Linux Docker container in the background... ###"
           docker run --name kali -d -p 3389:3389 kalilinux/kali-rolling tail -f /dev/null
-          # Giving the container a few seconds to boot up before we run commands inside it.
           sleep 15
 
-      - name: 2. Install Desktop and XRDP
+      - name: 2. Install Dependencies (XRDP, Desktop, and Curl)
         run: |
-          echo "### Updating and installing Kali desktop and XRDP... ###"
-          docker exec kali bash -c "apt-get update && apt-get install -y kali-desktop-xfce xrdp"
+          echo "### Updating and installing dependencies... ###"
+          # The fix is here: We are adding 'curl' to the installation list
+          # to ensure it's available before the next step tries to use it.
+          docker exec kali bash -c "apt-get update && apt-get install -y kali-desktop-xfce xrdp curl"
           
       - name: 3. Configure User and Start XRDP
         run: |
@@ -31,21 +32,11 @@ jobs:
       - name: 4. Install and Connect Tailscale
         run: |
           echo "### Installing and starting Tailscale inside the container... ###"
-          # We execute the install script and then run 'tailscale up'
-          # This command uses your secret auth key to automatically connect to your tailnet.
           docker exec kali bash -c "curl -fsSL https://tailscale.com/install.sh | sh && tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm"
           
       - name: 5. Keep Workflow Alive
         run: |
           echo "####################################################################"
-          echo "##"
           echo "##  SUCCESS! The Kali VM is running and connected to your Tailscale network."
-          echo "##  Find its IP address in your Tailscale Admin Console."
-          echo "##  The machine name will be 'github-kali-vm'."
-          echo "##"
-          echo "##  This job will stay alive for 6 hours. Press Ctrl+C or cancel the"
-          echo "##  workflow run on GitHub to stop it."
-          echo "##"
           echo "####################################################################"
-          # This keeps the runner (and the container) alive for the maximum job duration.
           sleep 21600 # 6 hours
