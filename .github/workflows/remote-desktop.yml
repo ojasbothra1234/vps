@@ -18,31 +18,31 @@ jobs:
 
       - name: 2. Install Dependencies (XRDP, Desktop, and Curl)
         run: |
-          # Exit immediately if any command fails
-          set -e
-          echo "### Updating package lists... ###"
-          docker exec kali apt-get update
-
-          echo "### Installing packages... ###"
-          docker exec kali apt-get install -y kali-desktop-xfce xrdp curl
+          echo "### Updating and installing dependencies... ###"
+          docker exec kali bash -c "apt-get update && apt-get install -y kali-desktop-xfce xrdp curl"
           
       - name: 3. Configure User and Start XRDP
         run: |
-          set -e
           echo "### Setting root password to 'kali' and starting XRDP service... ###"
           docker exec kali bash -c 'echo "root:kali" | chpasswd'
           docker exec kali bash -c "service xrdp start"
 
       - name: 4. Install and Connect Tailscale
         run: |
-          set -e
-          echo "### Installing Tailscale inside the container... ###"
+          echo "### Installing Tailscale... ###"
+          # Run the install script. It will place the files correctly.
           docker exec kali bash -c "curl -fsSL https://tailscale.com/install.sh | sh"
-          
-          echo "### Starting Tailscale and connecting to the tailnet... ###"
-          # This command will now run separately. If the auth key is wrong,
-          # the error message will be clearly visible in the logs for this step.
-          docker exec kali tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm
+
+          echo "### Manually starting Tailscale daemon in background... ###"
+          # Since there's no systemd, we start the daemon manually.
+          # The 'docker exec -d' command runs the process in a detached (background) mode.
+          docker exec -d kali tailscaled
+          # Give the daemon a moment to initialize before we connect.
+          sleep 5
+
+          echo "### Connecting to the tailnet... ###"
+          # Now that the daemon is running, we can connect the machine to our tailnet.
+          docker exec kali bash -c "tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm"
           
       - name: 5. Keep Workflow Alive
         run: |
