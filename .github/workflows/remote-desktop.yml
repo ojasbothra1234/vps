@@ -3,7 +3,6 @@
 name: Create Kali Linux Remote VM
 
 on:
-  # This allows you to run the workflow manually from the Actions tab in your GitHub repository.
   workflow_dispatch:
 
 jobs:
@@ -11,44 +10,39 @@ jobs:
     name: Start Kali Linux Environment
     runs-on: ubuntu-latest
     steps:
-      - name: Setup Kali Linux with XRDP & LocalXpose
+      - name: 1. Start Kali Linux Container
         run: |
-          echo "################################################################"
-          echo "## 1. Starting Kali Linux Docker container..."
-          echo "################################################################"
-          # We run the container in detached mode, name it 'kali', and map port 3389.
-          # The 'tail -f /dev/null' command is a simple trick to keep the container running.
+          echo "### Starting Kali Linux Docker container in the background... ###"
           docker run -d --name kali -p 3389:3389 kalilinux/kali-rolling tail -f /dev/null
-          sleep 10 # Give the container a moment to initialize.
+          # Giving the container a few seconds to boot up before we run commands inside it.
+          sleep 15
 
-          echo "################################################################"
-          echo "## 2. Installing Desktop Environment and XRDP..."
-          echo "################################################################"
-          # We execute commands inside the running 'kali' container.
+      - name: 2. Install Desktop and XRDP
+        run: |
+          echo "### Updating and installing Kali desktop and XRDP... ###"
           docker exec kali bash -c "apt-get update && apt-get install -y kali-desktop-xfce xrdp"
-
-          echo "################################################################"
-          echo "## 3. Setting a root password for RDP login..."
-          echo "## IMPORTANT: The default password is 'kali'. CHANGE THIS!"
-          echo "################################################################"
-          docker exec kali bash -c 'echo "root:kali" | chpasswd'
-
-          echo "################################################################"
-          echo "## 4. Starting the XRDP service..."
-          echo "################################################################"
-          docker exec kali bash -c "service xrdp start"
           
-          echo "################################################################"
-          echo "## 5. Setting up LocalXpose to expose the RDP port..."
-          echo "################################################################"
-          # Download and unzip the LocalXpose client on the runner host.
+      - name: 3. Configure User and Start XRDP
+        run: |
+          echo "### Setting root password to 'kali' and starting XRDP service... ###"
+          docker exec kali bash -c 'echo "root:kali" | chpasswd'
+          docker exec kali bash -c "service xrdp start"
+
+      - name: 4. Download and Setup LocalXpose
+        run: |
+          echo "### Downloading LocalXpose client... ###"
           curl -sL https://api.localxpose.io/api/v2/downloads/loclx-linux-amd64.zip -o loclx.zip
           unzip loclx.zip
+          # Make the client executable
+          chmod +x loclx
+
+      - name: 5. Verify LocalXpose Auth Token
+        run: |
+          echo "### Verifying your LocalXpose token... ###"
+          ./loclx account status --authtoken ${{ secrets.LOCALTUNNEL_TOKEN }}
+          # The command above will FAIL if your token is invalid.
           
-          echo "################################################################"
-          echo "## 6. Starting Tunnel. Look for the TCP URL below to connect."
-          echo "## The workflow will run for up to 6 hours or until you cancel it."
-          echo "################################################################"
-          # Run LocalXpose to create a public TCP tunnel to the container's RDP port.
-          # This command will keep running, holding the job open.
+      - name: 6. Run LocalXpose Tunnel
+        run: |
+          echo "### Starting tunnel. Look for the TCP URL below to connect. ###"
           ./loclx tunnel tcp --to 127.0.0.1:3389 --authtoken ${{ secrets.LOCALTUNNEL_TOKEN }}
