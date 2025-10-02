@@ -13,8 +13,6 @@ jobs:
       - name: 1. Start Kali Linux Container with Network Permissions
         run: |
           echo "### Starting Kali container with necessary network capabilities... ###"
-          # CRITICAL FIX: We add '--cap-add=NET_ADMIN' and '--device=/dev/net/tun'
-          # This gives the container permission to manage network interfaces for Tailscale.
           docker run --name kali -d \
             --cap-add=NET_ADMIN \
             --device=/dev/net/tun \
@@ -33,23 +31,28 @@ jobs:
           docker exec kali bash -c 'echo "root:kali" | chpasswd'
           docker exec kali bash -c "service xrdp start"
 
-      - name: 4. Install and Connect Tailscale
+      - name: 4. Install Tailscale
         run: |
-          echo "### Installing Tailscale... ###"
+          echo "### Installing Tailscale binaries inside the container... ###"
           docker exec kali bash -c "curl -fsSL https://tailscale.com/install.sh | sh"
 
-          echo "### Manually starting Tailscale daemon... ###"
+      - name: 5. Start Tailscale Daemon
+        run: |
+          echo "### Manually starting Tailscale daemon in background... ###"
           docker exec -d kali tailscaled
-          sleep 10 # Increased wait time to be safe
+          echo "Waiting 10 seconds for the daemon to initialize..."
+          sleep 10
 
-          echo "### Checking Tailscale status before connecting... ###"
-          # This helps with debugging; it will show if the daemon is running.
-          docker exec kali tailscale status || echo "Tailscale daemon not yet connected."
-
-          echo "### Connecting to the tailnet... ###"
-          docker exec kali bash -c "tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm"
+      - name: 6. Connect to Tailnet and Capture Logs
+        run: |
+          echo "### DEBUG: Attempting to connect to the tailnet and capturing all output... ###"
+          # The 'set -x' command prints each sub-command before running it.
+          # This will give us a detailed log of what 'tailscale up' is doing.
+          docker exec kali bash -c 'set -x; \
+            tailscale status; \
+            tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm'
           
-      - name: 5. Keep Workflow Alive
+      - name: 7. Keep Workflow Alive
         run: |
           echo "####################################################################"
           echo "##  SUCCESS! The Kali VM is running and connected to your Tailscale network."
