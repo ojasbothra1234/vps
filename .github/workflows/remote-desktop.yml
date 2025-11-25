@@ -1,60 +1,68 @@
-# .github/workflows/kali-vm.yml
-
-name: Create Kali Linux Remote VM with Tailscale
+name: Ubuntu RDP Debug
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Start Kali Linux Environment
+  rdp-debug:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+
     steps:
-      - name: 1. Start Kali Linux Container with Network Permissions
-        run: |
-          echo "### Starting Kali container with necessary network capabilities... ###"
-          docker run --name kali -d \
-            --cap-add=NET_ADMIN \
-            --device=/dev/net/tun \
-            -p 3389:3389 \
-            kalilinux/kali-rolling tail -f /dev/null
-          sleep 15
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: 2. Install Dependencies (XRDP, Desktop, and Curl)
+      - name: Install RDP and Desktop Environment
         run: |
-          echo "### Updating and installing dependencies... ###"
-          docker exec kali bash -c "apt-get update && apt-get install -y kali-desktop-xfce xrdp curl"
+          sudo apt update
+          sudo apt install -y xfce4 xrdp jq
+          echo xfce4-session > ~/.xsession
+          sudo cp ~/.xsession /etc/skel/
+          sudo systemctl enable xrdp
+
+      - name: Set RDP User Password
+        run: |
+          # The default user on GitHub Actions Ubuntu runners is 'runner'
+          if [ -z "${{ secrets.RDP_PASSWORD }}" ]; then
+            echo "Error: RDP_PASSWORD secret is not set. Please add it to your repository secrets." >&2
+            exit 1
+          fi
+          echo "runner:${{ secrets.RDP_PASSWORD }}" | sudo chpasswd
+
+      - name: Start XRDP Service
+        run: |
+          sudo systemctl start xrdp
+
+      - name: Setup ngrok Tunnel
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+        run: |
+          if [ -z "$NGROK_AUTH_TOKEN" ]; then
+            echo "Error: NGROK_AUTH_TOKEN secret is not set. Please add it to your repository secrets." >&2
+            exit 1
+          fi
           
-      - name: 3. Configure User and Start XRDP
-        run: |
-          echo "### Setting root password to 'kali' and starting XRDP service... ###"
-          docker exec kali bash -c 'echo "root:kali" | chpasswd'
-          docker exec kali bash -c "service xrdp start"
-
-      - name: 4. Install Tailscale
-        run: |
-          echo "### Installing Tailscale binaries inside the container... ###"
-          docker exec kali bash -c "curl -fsSL https://tailscale.com/install.sh | sh"
-
-      - name: 5. Start Tailscale Daemon
-        run: |
-          echo "### Manually starting Tailscale daemon in background... ###"
-          docker exec -d kali tailscaled
-          echo "Waiting 10 seconds for the daemon to initialize..."
+          # Download and install ngrok v3
+          curl -s https://ngrok-binaries.s3.amazonaws.com/ngrok-v3-stable-linux-amd64.zip -o ngrok.zip
+          unzip ngrok.zip
+          
+          # Authenticate ngrok and start a TCP tunnel for RDP (port 3389)
+          ./ngrok authtoken "$NGROK_AUTH_TOKEN"
+          nohup ./ngrok tcp 3389 --log=stdout > ngrok.log 2>&1 &
+          
+          # Wait for ngrok to establish the tunnel and fetch the public URL
           sleep 10
-
-      - name: 6. Connect to Tailnet and Capture Logs
-        run: |
-          echo "### DEBUG: Attempting to connect to the tailnet and capturing all output... ###"
-          # The 'set -x' command prints each sub-command before running it.
-          # This will give us a detailed log of what 'tailscale up' is doing.
-          docker exec kali bash -c 'set -x; \
-            tailscale status; \
-            tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=github-kali-vm'
+          NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[] | select(.proto == "tcp") | .public_url')
           
-      - name: 7. Keep Workflow Alive
+          echo "::notice file=ngrok.log::Ngrok Tunnel established."
+          echo "::notice file=ngrok.log::Ngrok Tunnel URL: $NGROK_URL"
+          echo "Ngrok Tunnel URL: $NGROK_URL"
+          echo "To connect: Use an RDP client with address $NGROK_URL"
+          
+          # Make the URL available as a job output (optional, for scripting)
+          echo "NGROK_URL=$NGROK_URL" >> $GITHUB_ENV
+
+      - name: Keep Runner Alive
         run: |
-          echo "####################################################################"
-          echo "##  SUCCESS! The Kali VM is running and connected to your Tailscale network."
-          echo "####################################################################"
-          sleep 21600 # 6 hours
+          echo "RDP session is active. This job will run until the timeout (360 minutes) or until manually cancelled."
+          while true; do sleep 60; done
